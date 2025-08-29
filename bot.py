@@ -194,17 +194,53 @@ class Database:
         try:
             with Database.get_connection() as conn:
                 with conn.cursor() as cur:
+                    # Создаем таблицы
                     for command in commands:
                         cur.execute(command)
                     
+                    # Добавляем недостающие поля если их нет
+                    try:
+                        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS search_all_ukraine BOOLEAN DEFAULT FALSE")
+                    except:
+                        pass
+                    
                     # Создаем индексы
                     for index in index_commands:
-                        cur.execute(index)
+                        try:
+                            cur.execute(index)
+                        except:
+                            pass
                         
                 conn.commit()
             logger.info("База данных инициализирована")
         except Exception as e:
             logger.error(f"Ошибка инициализации БД: {e}")
+            # Пытаемся создать базу с нуля если возникла ошибка
+            try:
+                with Database.get_connection() as conn:
+                    with conn.cursor() as cur:
+                        # Удаляем все таблицы и пересоздаем
+                        cur.execute("DROP TABLE IF EXISTS daily_limits CASCADE")
+                        cur.execute("DROP TABLE IF EXISTS captcha_attempts CASCADE") 
+                        cur.execute("DROP TABLE IF EXISTS complaints CASCADE")
+                        cur.execute("DROP TABLE IF EXISTS viewed_profiles CASCADE")
+                        cur.execute("DROP TABLE IF EXISTS matches CASCADE")
+                        cur.execute("DROP TABLE IF EXISTS likes CASCADE")
+                        cur.execute("DROP TABLE IF EXISTS user_photos CASCADE")
+                        cur.execute("DROP TABLE IF EXISTS users CASCADE")
+                        
+                        # Пересоздаем таблицы
+                        for command in commands:
+                            cur.execute(command)
+                            
+                        # Создаем индексы
+                        for index in index_commands:
+                            cur.execute(index)
+                            
+                    conn.commit()
+                logger.info("База данных пересоздана")
+            except Exception as e2:
+                logger.error(f"Критическая ошибка БД: {e2}")
     
     @staticmethod
     def execute_query(query: str, params: tuple = (), fetch: str = None):
@@ -1385,6 +1421,7 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
+        per_message=False,
     )
     
     # Добавляем обработчики
