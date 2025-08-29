@@ -81,6 +81,41 @@ class Database:
     @staticmethod
     def init_database():
         """Инициализация всех таблиц"""
+        # Сначала пересоздаем таблицы для совместимости
+        try:
+            with Database.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Принудительно удаляем старые таблицы
+                    drop_commands = [
+                        "DROP TABLE IF EXISTS daily_limits CASCADE",
+                        "DROP TABLE IF EXISTS captcha_attempts CASCADE", 
+                        "DROP TABLE IF EXISTS complaints CASCADE",
+                        "DROP TABLE IF EXISTS viewed_profiles CASCADE",
+                        "DROP TABLE IF EXISTS matches CASCADE",
+                        "DROP TABLE IF EXISTS likes CASCADE",
+                        "DROP TABLE IF EXISTS user_photos CASCADE",
+                        "DROP TABLE IF EXISTS users CASCADE"
+                    ]
+        
+        # Создаем индексы для оптимизации
+        index_commands = [
+            "CREATE INDEX IF NOT EXISTS idx_users_location ON users(current_lat, current_lon)",
+            "CREATE INDEX IF NOT EXISTS idx_users_search ON users(search_lat, search_lon)",
+            "CREATE INDEX IF NOT EXISTS idx_likes_from_user ON likes(from_user)",
+            "CREATE INDEX IF NOT EXISTS idx_likes_to_user ON likes(to_user)",
+            "CREATE INDEX IF NOT EXISTS idx_matches_users ON matches(user1, user2)",
+            "CREATE INDEX IF NOT EXISTS idx_viewed_profiles ON viewed_profiles(viewer_user)",
+            "CREATE INDEX IF NOT EXISTS idx_complaints_against ON complaints(against_user)"
+        ]
+                    
+                    for drop_cmd in drop_commands:
+                        cur.execute(drop_cmd)
+                    
+                conn.commit()
+            logger.info("Старые таблицы удалены")
+        except Exception as e:
+            logger.error(f"Ошибка удаления таблиц: {e}")
+        
         commands = [
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -134,6 +169,76 @@ class Database:
             CREATE TABLE IF NOT EXISTS matches (
                 user1 BIGINT NOT NULL,
                 user2 BIGINT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user1, user2)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS viewed_profiles (
+                viewer_user BIGINT NOT NULL,
+                viewed_user BIGINT NOT NULL,
+                first_view TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                can_view_again TIMESTAMP,
+                view_count INTEGER DEFAULT 1,
+                PRIMARY KEY (viewer_user, viewed_user)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS complaints (
+                id SERIAL PRIMARY KEY,
+                from_user BIGINT NOT NULL,
+                against_user BIGINT NOT NULL,
+                reason TEXT NOT NULL,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP,
+                resolved_by BIGINT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS captcha_attempts (
+                user_id BIGINT PRIMARY KEY,
+                attempts INTEGER DEFAULT 0,
+                last_attempt TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_verified BOOLEAN DEFAULT FALSE
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS daily_limits (
+                user_id BIGINT PRIMARY KEY,
+                complaints_today INTEGER DEFAULT 0,
+                last_complaint_date DATE DEFAULT CURRENT_DATE
+            )
+            """
+        ]
+        
+        # Создаем индексы для оптимизации
+        index_commands = [
+            "CREATE INDEX IF NOT EXISTS idx_users_location ON users(current_lat, current_lon)",
+            "CREATE INDEX IF NOT EXISTS idx_users_search ON users(search_lat, search_lon)",
+            "CREATE INDEX IF NOT EXISTS idx_likes_from_user ON likes(from_user)",
+            "CREATE INDEX IF NOT EXISTS idx_likes_to_user ON likes(to_user)",
+            "CREATE INDEX IF NOT EXISTS idx_matches_users ON matches(user1, user2)",
+            "CREATE INDEX IF NOT EXISTS idx_viewed_profiles ON viewed_profiles(viewer_user)",
+            "CREATE INDEX IF NOT EXISTS idx_complaints_against ON complaints(against_user)"
+        ]
+        
+        try:
+            with Database.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # Создаем таблицы
+                    for command in commands:
+                        cur.execute(command)
+                    
+                    # Создаем индексы
+                    for index in index_commands:
+                        cur.execute(index)
+                        
+                conn.commit()
+            logger.info("База данных создана заново")
+        except Exception as e:
+            logger.error(f"Критическая ошибка создания БД: {e}")
+            raise
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (user1, user2)
             )
@@ -1421,7 +1526,6 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
         allow_reentry=True,
-        per_message=False,
     )
     
     # Добавляем обработчики
